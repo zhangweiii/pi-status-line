@@ -1,0 +1,39 @@
+{
+  "name": "@zhangweiii/pi-status-line",
+  "version": "0.1.0",
+  "description": "Natural-language configurable status line extension for pi.",
+  "author": "zhangweiii",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhangweiii/pi-status-line.git"
+  },
+  "homepage": "https://github.com/zhangweiii/pi-status-line#readme",
+  "bugs": {
+    "url": "https://github.com/zhangweiii/pi-status-line/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "extensions",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  }
+}
