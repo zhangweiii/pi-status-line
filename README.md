@@ -67,3 +67,4 @@ pi install npm:@zhangweiii/pi-status-line
 
 - This package ships the TypeScript source directly. pi loads extensions via jiti, so a separate build step is not required.
 - pi core packages are declared as `peerDependencies`, following pi package guidance.
+- The extension respects `PI_CODING_AGENT_DIR` for its status line config and session scans, which makes isolated testing and non-default pi runtimes behave correctly.

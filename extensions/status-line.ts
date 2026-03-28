@@ -114,7 +114,8 @@ const LAYOUT_PRESETS = {
 
 type PresetId = keyof typeof LAYOUT_PRESETS;
 
-const CONFIG_PATH = join(homedir(), ".pi", "agent", "statusline.json");
+const AGENT_DIR = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+const CONFIG_PATH = join(AGENT_DIR, "statusline.json");
 
 function normalizeRows(rows: unknown): WidgetId[][] {
   if (!Array.isArray(rows)) return [];
@@ -147,7 +148,7 @@ function loadConfig(): Config {
 
 function saveConfig(cfg: Config): void {
   try {
-    mkdirSync(join(homedir(), ".pi", "agent"), { recursive: true });
+    mkdirSync(AGENT_DIR, { recursive: true });
     writeFileSync(CONFIG_PATH, JSON.stringify({ rows: cfg.rows, widgets: rowsToWidgets(cfg.rows) }, null, 2), "utf8");
   } catch {}
 }
@@ -226,7 +227,7 @@ function fmtTokens(n: number): string {
 
 // ─── 日/月 token 统计（扫描 session 文件）─────────────────────────────────────
 
-const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
+const SESSIONS_DIR = join(AGENT_DIR, "sessions");
 
 // 简单内存缓存，避免每次 render 都扫文件
 interface TokenScanCache {
