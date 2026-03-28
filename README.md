@@ -20,6 +20,12 @@ pi install /absolute/path/to/pi-status-line
 pi install npm:@zhangweiii/pi-status-line
 ```
 
+### GitHub
+
+```bash
+pi install git:github.com/zhangweiii/pi-status-line
+```
+
 ## Features
 
 - Multi-line footer rendering
