@@ -61,6 +61,52 @@ Default layout:
 - row 1: `model`, `thinking`, `git-branch`, `git-files`, `context-pct`, `context-left`
 - row 2: `cost`, `tokens-in`, `tokens-out`, `tokens-daily`, `tokens-monthly`, `session-clock`
 
+## Display preview
+
+The status line is rendered in the **pi footer area** at the bottom of the terminal. It supports one-line, two-line, and three-line layouts.
+
+> Notes
+>
+> - The examples below are plain-text previews. Actual colors follow your current pi theme.
+> - Real values change with your model, repo state, session usage, context size, and terminal width.
+> - When the terminal is narrow, the footer is truncated to fit the available width.
+
+### Default (`two-line-balanced`)
+
+```text
+Model: claude-sonnet-4 | Think: medium | ⎇ main | Files: 3 | Ctx: 12.4% | Left: 175k
+Cost: $0.18 | In: 24.3k | Out: 3.8k | Today: 412.7k | Month: 8.1M | Session: 46m
+```
+
+### `single-line-balanced`
+
+```text
+Model: claude-sonnet-4 | Think: medium | ⎇ main | Files: 3 | Ctx: 12.4% | Left: 175k | Cost: $0.18 | In: 24.3k | Out: 3.8k | Today: 412.7k | Month: 8.1M | Session: 46m
+```
+
+### `two-line-compact`
+
+```text
+Model: claude-sonnet-4 | ⎇ main | Ctx: 12.4% | Cost: $0.18
+In: 24.3k | Out: 3.8k | Today: 412.7k | Month: 8.1M | Session: 46m
+```
+
+### `three-line-detailed`
+
+```text
+Model: claude-sonnet-4 | Think: medium | ⎇ main | Files: 3
+Ctx: 12.4% | Left: 175k | Cost: $0.18
+In: 24.3k | Out: 3.8k | Today: 412.7k | Month: 8.1M | Session: 46m
+```
+
+### Other widget examples
+
+```text
+Ctx: ███░░░░░░░░░░░░ 28k/200k
+(+128,-24) | +128 | -24 | (pi-status-line) | 𖠰 feature-readme
+Cache: 37.5% | Total: 52.1k | Turns: 19 | ~/work/pi-status-line | Mem: 18.4G/32.0G | Term: 180
+```
+
 ## Available widgets
 
 - Core: `model`, `thinking`
