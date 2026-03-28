@@ -225,6 +225,12 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
+function fmtSpeed(tokens: number, totalMs: number): string {
+  if (!totalMs || totalMs <= 0) return "—";
+  const seconds = totalMs / 1000;
+  return `${(tokens / seconds).toFixed(0)}tk/s`;
+}
+
 // ─── 日/月 token 统计（扫描 session 文件）─────────────────────────────────────
 
 const SESSIONS_DIR = join(AGENT_DIR, "sessions");
@@ -468,20 +474,14 @@ function renderWidget(id: WidgetId, ra: RenderArgs): string | null {
 
     // ── Token Speed ──
     case "speed-in": {
-      if (!speedData.totalMs) return null;
-      const s = speedData.totalMs / 1000;
-      return t.fg("muted", "In: ") + t.fg("dim", `${(speedData.inputTokens / s).toFixed(0)}tk/s`);
+      return t.fg("muted", "In: ") + t.fg("dim", fmtSpeed(speedData.inputTokens, speedData.totalMs));
     }
     case "speed-out": {
-      if (!speedData.totalMs) return null;
-      const s = speedData.totalMs / 1000;
-      return t.fg("muted", "Out: ") + t.fg("dim", `${(speedData.outputTokens / s).toFixed(0)}tk/s`);
+      return t.fg("muted", "Out: ") + t.fg("dim", fmtSpeed(speedData.outputTokens, speedData.totalMs));
     }
     case "speed-total": {
-      if (!speedData.totalMs) return null;
-      const s = speedData.totalMs / 1000;
       const total = speedData.inputTokens + speedData.outputTokens;
-      return t.fg("muted", "Speed: ") + t.fg("dim", `${(total / s).toFixed(0)}tk/s`);
+      return t.fg("muted", "Speed: ") + t.fg("dim", fmtSpeed(total, speedData.totalMs));
     }
 
     // ── Context ──
