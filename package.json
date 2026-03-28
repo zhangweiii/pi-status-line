@@ -1,6 +1,6 @@
 {
   "name": "@zhangweiii/pi-status-line",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Natural-language configurable status line extension for pi.",
   "author": "zhangweiii",
   "license": "MIT",
