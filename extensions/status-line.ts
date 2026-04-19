@@ -246,23 +246,63 @@ interface TokenScanCache {
 let tokenScanCache: TokenScanCache | null = null;
 const SCAN_TTL = 60_000; // 60 秒刷新一次
 
-function getDatePrefix(date: Date): string {
-  return date.toISOString().slice(0, 10); // YYYY-MM-DD
-}
-function getMonthPrefix(date: Date): string {
-  return date.toISOString().slice(0, 7); // YYYY-MM
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
 }
 
-function scanSessionTokens(prefix: string): number {
-  let total = 0;
+function getLocalDateKey(date: Date): string {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+function getLocalMonthKey(date: Date): string {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}`;
+}
+
+function shiftMonth(date: Date, delta: number): Date {
+  return new Date(date.getFullYear(), date.getMonth() + delta, 1);
+}
+
+function getRelevantMonthKeys(date: Date): Set<string> {
+  return new Set([
+    getLocalMonthKey(shiftMonth(date, -1)),
+    getLocalMonthKey(date),
+    getLocalMonthKey(shiftMonth(date, 1)),
+  ]);
+}
+
+function parseFileDatePrefix(file: string): { dayKey: string | null; monthKey: string | null } {
+  const match = /^(\d{4}-\d{2})(?:-(\d{2}))?/.exec(file);
+  if (!match) return { dayKey: null, monthKey: null };
+
+  const monthKey = match[1];
+  return {
+    monthKey,
+    dayKey: match[2] ? `${monthKey}-${match[2]}` : null,
+  };
+}
+
+function scanSessionTokens(
+  dailyKey: string,
+  monthlyKey: string,
+  relevantMonths: Set<string>,
+): { daily: number; monthly: number } {
+  let daily = 0;
+  let monthly = 0;
+
   try {
     const dirs = readdirSync(SESSIONS_DIR);
     for (const dir of dirs) {
       const dirPath = join(SESSIONS_DIR, dir);
       try {
         if (!statSync(dirPath).isDirectory()) continue;
-        const files = readdirSync(dirPath).filter(f => f.startsWith(prefix) && f.endsWith(".jsonl"));
+        const files = readdirSync(dirPath).filter((file) => {
+          if (!file.endsWith(".jsonl")) return false;
+          const { monthKey } = parseFileDatePrefix(file);
+          return !monthKey || relevantMonths.has(monthKey);
+        });
+
         for (const file of files) {
+          const { dayKey: fileDayKey, monthKey: fileMonthKey } = parseFileDatePrefix(file);
           try {
             const content = readFileSync(join(dirPath, file), "utf8");
             for (const line of content.split("\n")) {
@@ -270,8 +310,33 @@ function scanSessionTokens(prefix: string): number {
               try {
                 const entry = JSON.parse(line);
                 const msg = entry.message ?? entry;
-                if (msg.role === "assistant" && msg.usage?.totalTokens) {
-                  total += msg.usage.totalTokens;
+                const totalTokens = msg.role === "assistant" ? msg.usage?.totalTokens : undefined;
+                const timestamp = typeof entry.timestamp === "string"
+                  ? entry.timestamp
+                  : typeof msg.timestamp === "string"
+                    ? msg.timestamp
+                    : undefined;
+                if (typeof totalTokens !== "number") continue;
+
+                if (timestamp) {
+                  const entryDate = new Date(timestamp);
+                  if (Number.isNaN(entryDate.getTime())) continue;
+
+                  const entryMonth = getLocalMonthKey(entryDate);
+                  if (entryMonth !== monthlyKey) continue;
+
+                  monthly += totalTokens;
+                  if (getLocalDateKey(entryDate) === dailyKey) {
+                    daily += totalTokens;
+                  }
+                  continue;
+                }
+
+                if (fileMonthKey === monthlyKey) {
+                  monthly += totalTokens;
+                }
+                if (fileDayKey === dailyKey) {
+                  daily += totalTokens;
                 }
               } catch {}
             }
@@ -280,13 +345,15 @@ function scanSessionTokens(prefix: string): number {
       } catch {}
     }
   } catch {}
-  return total;
+
+  return { daily, monthly };
 }
 
 function getTokenScanCache(): TokenScanCache {
   const now = Date.now();
-  const today = getDatePrefix(new Date());
-  const month = getMonthPrefix(new Date());
+  const currentDate = new Date();
+  const today = getLocalDateKey(currentDate);
+  const month = getLocalMonthKey(currentDate);
 
   if (
     tokenScanCache &&
@@ -297,8 +364,8 @@ function getTokenScanCache(): TokenScanCache {
     return tokenScanCache;
   }
 
-  const daily = scanSessionTokens(today);
-  const monthly = scanSessionTokens(month);
+  const relevantMonths = getRelevantMonthKeys(currentDate);
+  const { daily, monthly } = scanSessionTokens(today, month, relevantMonths);
   tokenScanCache = { daily, monthly, dailyKey: today, monthlyKey: month, lastScan: now };
   return tokenScanCache;
 }
