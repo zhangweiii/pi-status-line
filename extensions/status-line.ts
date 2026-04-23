@@ -246,63 +246,23 @@ interface TokenScanCache {
 let tokenScanCache: TokenScanCache | null = null;
 const SCAN_TTL = 60_000; // 60 秒刷新一次
 
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
+function getDatePrefix(date: Date): string {
+  return date.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+function getMonthPrefix(date: Date): string {
+  return date.toISOString().slice(0, 7); // YYYY-MM
 }
 
-function getLocalDateKey(date: Date): string {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-}
-
-function getLocalMonthKey(date: Date): string {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}`;
-}
-
-function shiftMonth(date: Date, delta: number): Date {
-  return new Date(date.getFullYear(), date.getMonth() + delta, 1);
-}
-
-function getRelevantMonthKeys(date: Date): Set<string> {
-  return new Set([
-    getLocalMonthKey(shiftMonth(date, -1)),
-    getLocalMonthKey(date),
-    getLocalMonthKey(shiftMonth(date, 1)),
-  ]);
-}
-
-function parseFileDatePrefix(file: string): { dayKey: string | null; monthKey: string | null } {
-  const match = /^(\d{4}-\d{2})(?:-(\d{2}))?/.exec(file);
-  if (!match) return { dayKey: null, monthKey: null };
-
-  const monthKey = match[1];
-  return {
-    monthKey,
-    dayKey: match[2] ? `${monthKey}-${match[2]}` : null,
-  };
-}
-
-function scanSessionTokens(
-  dailyKey: string,
-  monthlyKey: string,
-  relevantMonths: Set<string>,
-): { daily: number; monthly: number } {
-  let daily = 0;
-  let monthly = 0;
-
+function scanSessionTokens(prefix: string): number {
+  let total = 0;
   try {
     const dirs = readdirSync(SESSIONS_DIR);
     for (const dir of dirs) {
       const dirPath = join(SESSIONS_DIR, dir);
       try {
         if (!statSync(dirPath).isDirectory()) continue;
-        const files = readdirSync(dirPath).filter((file) => {
-          if (!file.endsWith(".jsonl")) return false;
-          const { monthKey } = parseFileDatePrefix(file);
-          return !monthKey || relevantMonths.has(monthKey);
-        });
-
+        const files = readdirSync(dirPath).filter(f => f.startsWith(prefix) && f.endsWith(".jsonl"));
         for (const file of files) {
-          const { dayKey: fileDayKey, monthKey: fileMonthKey } = parseFileDatePrefix(file);
           try {
             const content = readFileSync(join(dirPath, file), "utf8");
             for (const line of content.split("\n")) {
@@ -310,33 +270,8 @@ function scanSessionTokens(
               try {
                 const entry = JSON.parse(line);
                 const msg = entry.message ?? entry;
-                const totalTokens = msg.role === "assistant" ? msg.usage?.totalTokens : undefined;
-                const timestamp = typeof entry.timestamp === "string"
-                  ? entry.timestamp
-                  : typeof msg.timestamp === "string"
-                    ? msg.timestamp
-                    : undefined;
-                if (typeof totalTokens !== "number") continue;
-
-                if (timestamp) {
-                  const entryDate = new Date(timestamp);
-                  if (Number.isNaN(entryDate.getTime())) continue;
-
-                  const entryMonth = getLocalMonthKey(entryDate);
-                  if (entryMonth !== monthlyKey) continue;
-
-                  monthly += totalTokens;
-                  if (getLocalDateKey(entryDate) === dailyKey) {
-                    daily += totalTokens;
-                  }
-                  continue;
-                }
-
-                if (fileMonthKey === monthlyKey) {
-                  monthly += totalTokens;
-                }
-                if (fileDayKey === dailyKey) {
-                  daily += totalTokens;
+                if (msg.role === "assistant" && msg.usage?.totalTokens) {
+                  total += msg.usage.totalTokens;
                 }
               } catch {}
             }
@@ -345,15 +280,13 @@ function scanSessionTokens(
       } catch {}
     }
   } catch {}
-
-  return { daily, monthly };
+  return total;
 }
 
 function getTokenScanCache(): TokenScanCache {
   const now = Date.now();
-  const currentDate = new Date();
-  const today = getLocalDateKey(currentDate);
-  const month = getLocalMonthKey(currentDate);
+  const today = getDatePrefix(new Date());
+  const month = getMonthPrefix(new Date());
 
   if (
     tokenScanCache &&
@@ -364,8 +297,8 @@ function getTokenScanCache(): TokenScanCache {
     return tokenScanCache;
   }
 
-  const relevantMonths = getRelevantMonthKeys(currentDate);
-  const { daily, monthly } = scanSessionTokens(today, month, relevantMonths);
+  const daily = scanSessionTokens(today);
+  const monthly = scanSessionTokens(month);
   tokenScanCache = { daily, monthly, dailyKey: today, monthlyKey: month, lastScan: now };
   return tokenScanCache;
 }
@@ -455,12 +388,63 @@ function getContextStats(ctx: ExtensionContext): ContextStats {
 
 // ─── Widget 渲染 ──────────────────────────────────────────────────────────────
 
+const EMPTY_TOKEN_STATS: SessionTokenStats = {
+  input: 0,
+  output: 0,
+  cached: 0,
+  total: 0,
+  cost: 0,
+  assistantTurns: 0,
+  cacheHitRatio: null,
+};
+
+const EMPTY_CONTEXT_STATS: ContextStats = {
+  tokens: null,
+  percent: null,
+  contextWindow: null,
+  remaining: null,
+};
+
+interface FooterRenderState {
+  cwd: string;
+  modelId: string | null;
+  tokenStats: SessionTokenStats;
+  contextStats: ContextStats;
+  thinkingLevel: string | null;
+  sessionName: string | null;
+}
+
+function isStaleExtensionError(error: unknown): boolean {
+  return error instanceof Error && /stale after session replacement or reload/i.test(error.message);
+}
+
+function safeSnapshotFooterState(ctx: ExtensionContext, pi: ExtensionAPI, previous: FooterRenderState): FooterRenderState {
+  const safeRead = <T>(read: () => T, fallback: T): T => {
+    try {
+      return read();
+    } catch (error) {
+      if (isStaleExtensionError(error)) return fallback;
+      throw error;
+    }
+  };
+
+  return {
+    cwd: safeRead(() => ctx.cwd, previous.cwd),
+    modelId: safeRead(() => ctx.model?.id ?? null, previous.modelId),
+    tokenStats: safeRead(() => getSessionTokenStats(ctx), previous.tokenStats),
+    contextStats: safeRead(() => getContextStats(ctx), previous.contextStats),
+    thinkingLevel: safeRead(() => pi.getThinkingLevel?.() ?? null, previous.thinkingLevel),
+    sessionName: safeRead(() => pi.getSessionName?.() ?? null, previous.sessionName),
+  };
+}
+
 interface RenderArgs {
-  ctx: ExtensionContext;
   theme: ExtensionContext["ui"]["theme"];
   sessionStart: number;
   // 速率计算用的累积数据
   speedData: { totalMs: number; inputTokens: number; outputTokens: number };
+  cwd: string;
+  modelId: string | null;
   tokenStats: SessionTokenStats;
   contextStats: ContextStats;
   gitStats: GitStats | null;
@@ -469,13 +453,12 @@ interface RenderArgs {
 }
 
 function renderWidget(id: WidgetId, ra: RenderArgs): string | null {
-  const { ctx, theme: t, sessionStart, speedData, tokenStats, contextStats, gitStats, thinkingLevel, sessionName } = ra;
-  const cwd = ctx.cwd;
+  const { cwd, modelId, theme: t, sessionStart, speedData, tokenStats, contextStats, gitStats, thinkingLevel, sessionName } = ra;
 
   switch (id) {
     // ── Core ──
     case "model": {
-      const m = ctx.model?.id ?? "—";
+      const m = modelId ?? "—";
       return t.fg("muted", "Model: ") + t.fg("accent", m);
     }
     case "thinking": {
@@ -630,29 +613,62 @@ export default function (pi: ExtensionAPI) {
   let config = loadConfig();
   let sessionStart = Date.now();
   let speedData = { totalMs: 0, inputTokens: 0, outputTokens: 0 };
+  let footerState: FooterRenderState = {
+    cwd: process.cwd(),
+    modelId: null,
+    tokenStats: { ...EMPTY_TOKEN_STATS },
+    contextStats: { ...EMPTY_CONTEXT_STATS },
+    thinkingLevel: null,
+    sessionName: null,
+  };
+  let footerGeneration = 0;
+  let footerActive = false;
 
   // 当 /statusline 命令触发后，下一轮 before_agent_start 注入配置上下文
   let pendingConfigRequest: string | null = null;
 
+  function refreshFooterState(ctx: ExtensionContext) {
+    footerState = safeSnapshotFooterState(ctx, pi, footerState);
+  }
+
   // ── footer 安装 ─────────────────────────────────────────────────────────────
   function installFooter(ctx: ExtensionContext) {
+    footerActive = true;
+    refreshFooterState(ctx);
+    const generation = ++footerGeneration;
+
     ctx.ui.setFooter((tui, theme, footerData) => {
-      const unsub = footerData.onBranchChange(() => tui.requestRender());
+      let disposed = false;
+      const unsub = footerData.onBranchChange(() => {
+        if (!disposed && footerActive && generation === footerGeneration) {
+          tui.requestRender();
+        }
+      });
+
       return {
-        dispose: unsub,
+        dispose() {
+          disposed = true;
+          unsub();
+        },
         invalidate() {},
         render(width: number): string[] {
+          if (disposed || !footerActive || generation !== footerGeneration) {
+            return [];
+          }
+
+          refreshFooterState(ctx);
           const branch = footerData.getGitBranch();
           const ra: RenderArgs = {
-            ctx,
             theme,
             sessionStart,
             speedData,
-            tokenStats: getSessionTokenStats(ctx),
-            contextStats: getContextStats(ctx),
-            gitStats: getGitStats(ctx.cwd, branch),
-            thinkingLevel: pi.getThinkingLevel?.() ?? null,
-            sessionName: pi.getSessionName?.() ?? null,
+            cwd: footerState.cwd,
+            modelId: footerState.modelId,
+            tokenStats: footerState.tokenStats,
+            contextStats: footerState.contextStats,
+            gitStats: getGitStats(footerState.cwd, branch),
+            thinkingLevel: footerState.thinkingLevel,
+            sessionName: footerState.sessionName,
           };
           const sep = theme.fg("dim", " | ");
           const lines = config.rows
@@ -675,13 +691,21 @@ export default function (pi: ExtensionAPI) {
     installFooter(ctx);
   });
 
+  pi.on("session_shutdown", async (_event, ctx) => {
+    // 先让旧 footer 主动失效，再恢复默认 footer；即使 UI 还有一帧晚到的 render，
+    // 也只会走缓存 / 空渲染，不会再读取 stale extension context。
+    footerActive = false;
+    footerGeneration += 1;
+    ctx.ui.setFooter(undefined);
+  });
+
   pi.on("session_switch", async (_event, ctx) => {
     sessionStart = Date.now();
     speedData = { totalMs: 0, inputTokens: 0, outputTokens: 0 };
     installFooter(ctx);
   });
 
-  pi.on("agent_end", async (event, _ctx) => {
+  pi.on("agent_end", async (event, ctx) => {
     for (const msg of event.messages) {
       if (msg.role === "assistant") {
         const m = msg as AssistantMessage;
@@ -690,6 +714,7 @@ export default function (pi: ExtensionAPI) {
         speedData.totalMs += (m.usage.output / 50) * 1000;
       }
     }
+    refreshFooterState(ctx);
   });
 
   // ── configure_statusline 工具：LLM 理解自然语言后调用此工具更新配置 ─────────────
