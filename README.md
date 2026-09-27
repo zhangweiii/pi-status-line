@@ -29,7 +29,7 @@ pi install git:github.com/zhangweiii/pi-status-line
 ## Features
 
 - Multi-line footer rendering
-- Rich status widgets for model, git, tokens, context, session, and environment
+- Rich status widgets for model, git, tokens, context, session, environment, and other extensions' statuses
 - `/statusline` command for natural-language configuration
 - `configure_statusline` tool for LLM-driven layout updates
 - Persistent layout config stored under the pi agent directory
@@ -116,6 +116,7 @@ Cache: 37.5% | Total: 52.1k | Turns: 19 | ~/work/pi-status-line | Mem: 18.4G/32.
 - Context: `context-length`, `context-pct`, `context-left`, `context-bar`
 - Session: `cost`, `session-clock`, `session-turns`, `session-name`
 - Environment: `cwd`, `memory`, `terminal-width`
+- Extensions: `ext-status`（其他扩展通过 `ctx.ui.setStatus()` 写入的状态文本，按 key 排序拼成一行）
 
 Token widget semantics:
 

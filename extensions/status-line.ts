@@ -12,6 +12,7 @@
  *   Context:     context-length, context-pct, context-left, context-bar
  *   Session:     cost, session-clock, session-turns, session-name
  *   Environment: cwd, memory, terminal-width
+ *   Extensions:  ext-status
  */
 
 import type { AssistantMessage } from "@mariozechner/pi-ai";
@@ -68,6 +69,9 @@ export const ALL_WIDGETS = {
   "cwd":            { label: "Working Dir",    category: "Environment", desc: "当前工作目录 (cwd: ...)" },
   "memory":         { label: "Memory Usage",   category: "Environment", desc: "系统内存使用 (Mem: used/total)" },
   "terminal-width": { label: "Terminal Width", category: "Environment", desc: "终端宽度列数 (Term: N)" },
+
+  // Extensions（其他扩展通过 ctx.ui.setStatus() 提供的状态文本）
+  "ext-status":     { label: "Extension Status", category: "Extensions", desc: "其他扩展的 ctx.ui.setStatus() 文本，按 key 排序后拼成一行" },
 } as const;
 
 export type WidgetId = keyof typeof ALL_WIDGETS;
@@ -468,11 +472,38 @@ function safeSnapshotFooterState(ctx: ExtensionContext, pi: ExtensionAPI, previo
   };
 }
 
+const NO_EXTENSION_STATUSES: ReadonlyMap<string, string> = new Map();
+
+/** 单行化状态文本：去掉换行/制表符并折叠空格（与 pi 内置 footer 的处理一致）。 */
+function sanitizeStatusText(text: string): string {
+  return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
+}
+
+/** 把 ctx.ui.setStatus() 写入的状态按 key 排序拼成一行；没有内容时返回空串。 */
+function formatExtensionStatuses(statuses: ReadonlyMap<string, string>): string {
+  return Array.from(statuses.entries())
+    .map(([key, text]) => [key, sanitizeStatusText(text)] as const)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, text]) => text)
+    .filter((text) => text.length > 0)
+    .join(" ");
+}
+
+/** 读取其他扩展写入 footer 的状态文本；老版本 pi 没有这个方法时返回空。 */
+function readExtensionStatuses(footerData: unknown): ReadonlyMap<string, string> {
+  const provider = footerData as { getExtensionStatuses?: () => ReadonlyMap<string, string> };
+  try {
+    return provider?.getExtensionStatuses?.() ?? NO_EXTENSION_STATUSES;
+  } catch {
+    return NO_EXTENSION_STATUSES;
+  }
+}
+
 interface RenderArgs {
   theme: ExtensionContext["ui"]["theme"];
   sessionStart: number;
-  // 速率计算用的累积数据
-  speedData: { totalMs: number; inputTokens: number; outputTokens: number };
+  // 速率计算用的窗口合计：totalMs 是流式总时长，ttftMs 是其中的首 token 等待时长
+  speedData: SpeedStats;
   cwd: string;
   modelId: string | null;
   tokenStats: SessionTokenStats;
@@ -480,10 +511,12 @@ interface RenderArgs {
   gitStats: GitStats | null;
   thinkingLevel: string | null;
   sessionName: string | null;
+  // ctx.ui.setStatus() 写入的扩展状态文本，键为写入方自定义的 key
+  extensionStatuses: ReadonlyMap<string, string>;
 }
 
 function renderWidget(id: WidgetId, ra: RenderArgs): string | null {
-  const { cwd, modelId, theme: t, sessionStart, speedData, tokenStats, contextStats, gitStats, thinkingLevel, sessionName } = ra;
+  const { cwd, modelId, theme: t, sessionStart, speedData, tokenStats, contextStats, gitStats, thinkingLevel, sessionName, extensionStatuses } = ra;
 
   switch (id) {
     // ── Core ──
@@ -634,6 +667,13 @@ function renderWidget(id: WidgetId, ra: RenderArgs): string | null {
       return t.fg("muted", "Term: ") + t.fg("dim", String(process.stdout.columns ?? "?"));
     }
 
+    // ── Extensions ──
+    case "ext-status": {
+      // 原样透传：文本格式（含颜色）由写入它的扩展决定
+      const text = formatExtensionStatuses(extensionStatuses);
+      return text.length > 0 ? text : null;
+    }
+
     default:
       return null;
   }
@@ -704,6 +744,7 @@ export default function (pi: ExtensionAPI) {
             gitStats: getGitStats(footerState.cwd, branch),
             thinkingLevel: footerState.thinkingLevel,
             sessionName: footerState.sessionName,
+            extensionStatuses: readExtensionStatuses(footerData),
           };
           const sep = theme.fg("dim", " | ");
           const lines = config.rows
