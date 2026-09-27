@@ -71,7 +71,7 @@ export const ALL_WIDGETS = {
   "terminal-width": { label: "Terminal Width", category: "Environment", desc: "终端宽度列数 (Term: N)" },
 
   // Extensions（其他扩展通过 ctx.ui.setStatus() 提供的状态文本）
-  "ext-status":     { label: "Extension Status", category: "Extensions", desc: "其他扩展的 ctx.ui.setStatus() 文本，按 key 排序后拼成一行" },
+  "ext-status":     { label: "Extension Status", category: "Extensions", desc: "其他扩展的 ctx.ui.setStatus() 文本，按 key 排序后拼成一行；纯文本按主题压暗" },
 } as const;
 
 export type WidgetId = keyof typeof ALL_WIDGETS;
@@ -479,6 +479,11 @@ function sanitizeStatusText(text: string): string {
   return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
 }
 
+/** 简单的 ANSI 检测：自带转义序列的文本不再套用状态栏主题色。 */
+function hasAnsi(text: string): boolean {
+  return text.includes("\u001b[");
+}
+
 /** 把 ctx.ui.setStatus() 写入的状态按 key 排序拼成一行；没有内容时返回空串。 */
 function formatExtensionStatuses(statuses: ReadonlyMap<string, string>): string {
   return Array.from(statuses.entries())
@@ -669,9 +674,11 @@ function renderWidget(id: WidgetId, ra: RenderArgs): string | null {
 
     // ── Extensions ──
     case "ext-status": {
-      // 原样透传：文本格式（含颜色）由写入它的扩展决定
       const text = formatExtensionStatuses(extensionStatuses);
-      return text.length > 0 ? text : null;
+      if (text.length === 0) return null;
+      // 纯文本状态由状态栏统一压暗，与外层 widget 的配色保持一致；
+      // 已自带颜色的文本原样透传，由写入它的扩展决定样式。
+      return hasAnsi(text) ? text : t.fg("dim", text);
     }
 
     default:

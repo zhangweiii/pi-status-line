@@ -116,7 +116,7 @@ Cache: 37.5% | Total: 52.1k | Turns: 19 | ~/work/pi-status-line | Mem: 18.4G/32.
 - Context: `context-length`, `context-pct`, `context-left`, `context-bar`
 - Session: `cost`, `session-clock`, `session-turns`, `session-name`
 - Environment: `cwd`, `memory`, `terminal-width`
-- Extensions: `ext-status`（其他扩展通过 `ctx.ui.setStatus()` 写入的状态文本，按 key 排序拼成一行）
+- Extensions: `ext-status`（其他扩展通过 `ctx.ui.setStatus()` 写入的状态文本，按 key 排序拼成一行；纯文本会用主题压暗，自带颜色的文本原样透传）
 
 Token widget semantics:
 
