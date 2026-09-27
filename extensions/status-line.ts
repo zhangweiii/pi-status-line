@@ -231,6 +231,36 @@ function fmtSpeed(tokens: number, totalMs: number): string {
   return `${(tokens / seconds).toFixed(0)}tk/s`;
 }
 
+// ─── 速率滑动窗口 ─────────────────────────────────────────────────────────────
+
+// 速率只看最近若干次 assistant 请求，避免 session 累计平均把早期尖峰长期留在 footer 上
+const SPEED_WINDOW_MESSAGES = 5;
+
+interface SpeedSample {
+  inputTokens: number;
+  outputTokens: number;
+  totalMs: number;
+  ttftMs: number;
+}
+
+interface SpeedStats {
+  inputTokens: number;
+  outputTokens: number;
+  totalMs: number;
+  ttftMs: number;
+}
+
+function sumSpeedSamples(samples: readonly SpeedSample[]): SpeedStats {
+  const stats: SpeedStats = { inputTokens: 0, outputTokens: 0, totalMs: 0, ttftMs: 0 };
+  for (const s of samples) {
+    stats.inputTokens += s.inputTokens;
+    stats.outputTokens += s.outputTokens;
+    stats.totalMs += s.totalMs;
+    stats.ttftMs += s.ttftMs;
+  }
+  return stats;
+}
+
 // ─── 日/月 token 统计（扫描 session 文件）─────────────────────────────────────
 
 const SESSIONS_DIR = join(AGENT_DIR, "sessions");
@@ -524,10 +554,12 @@ function renderWidget(id: WidgetId, ra: RenderArgs): string | null {
 
     // ── Token Speed ──
     case "speed-in": {
-      return t.fg("muted", "In: ") + t.fg("dim", fmtSpeed(speedData.inputTokens, speedData.totalMs));
+      // 输入速率按 prefill 时长（首 token 等待）算
+      return t.fg("muted", "In: ") + t.fg("dim", fmtSpeed(speedData.inputTokens, speedData.ttftMs));
     }
     case "speed-out": {
-      return t.fg("muted", "Out: ") + t.fg("dim", fmtSpeed(speedData.outputTokens, speedData.totalMs));
+      // 输出速率按 decode 时长（首 token 之后到流结束）算
+      return t.fg("muted", "Out: ") + t.fg("dim", fmtSpeed(speedData.outputTokens, speedData.totalMs - speedData.ttftMs));
     }
     case "speed-total": {
       const total = speedData.inputTokens + speedData.outputTokens;
@@ -612,7 +644,10 @@ function renderWidget(id: WidgetId, ra: RenderArgs): string | null {
 export default function (pi: ExtensionAPI) {
   let config = loadConfig();
   let sessionStart = Date.now();
-  let speedData = { totalMs: 0, inputTokens: 0, outputTokens: 0 };
+  // 窗口内最近的 assistant 请求样本；当前请求的墙钟计时：请求发出时间与首个 token 到达时间
+  let speedSamples: SpeedSample[] = [];
+  let genStart: number | null = null;
+  let genFirstToken: number | null = null;
   let footerState: FooterRenderState = {
     cwd: process.cwd(),
     modelId: null,
@@ -661,7 +696,7 @@ export default function (pi: ExtensionAPI) {
           const ra: RenderArgs = {
             theme,
             sessionStart,
-            speedData,
+            speedData: sumSpeedSamples(speedSamples),
             cwd: footerState.cwd,
             modelId: footerState.modelId,
             tokenStats: footerState.tokenStats,
@@ -686,7 +721,9 @@ export default function (pi: ExtensionAPI) {
   // ── 生命周期 ────────────────────────────────────────────────────────────────
   pi.on("session_start", async (_event, ctx) => {
     sessionStart = Date.now();
-    speedData = { totalMs: 0, inputTokens: 0, outputTokens: 0 };
+    speedSamples = [];
+    genStart = null;
+    genFirstToken = null;
     config = loadConfig();
     installFooter(ctx);
   });
@@ -701,19 +738,48 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_switch", async (_event, ctx) => {
     sessionStart = Date.now();
-    speedData = { totalMs: 0, inputTokens: 0, outputTokens: 0 };
+    speedSamples = [];
+    genStart = null;
+    genFirstToken = null;
     installFooter(ctx);
   });
 
-  pi.on("agent_end", async (event, ctx) => {
-    for (const msg of event.messages) {
-      if (msg.role === "assistant") {
-        const m = msg as AssistantMessage;
-        speedData.inputTokens += m.usage.input;
-        speedData.outputTokens += m.usage.output;
-        speedData.totalMs += (m.usage.output / 50) * 1000;
-      }
+  // 速率统计全部使用墙钟时间：message_start 记请求发出，首个 message_update 记首 token 到达，
+  // message_end 结算该次请求的 prefill（ttft）与 decode 时长。
+  pi.on("message_start", async (event) => {
+    if (event.message.role !== "assistant") return;
+    genStart = Date.now();
+    genFirstToken = null;
+  });
+
+  pi.on("message_update", async () => {
+    if (genStart !== null && genFirstToken === null) {
+      genFirstToken = Date.now();
     }
+  });
+
+  pi.on("message_end", async (event) => {
+    if (event.message.role !== "assistant") return;
+
+    const ended = Date.now();
+    const started = genStart ?? ended;
+    const firstToken = genFirstToken ?? ended;
+    genStart = null;
+    genFirstToken = null;
+
+    const m = event.message as AssistantMessage;
+    speedSamples.push({
+      inputTokens: m.usage.input,
+      outputTokens: m.usage.output,
+      totalMs: ended - started,
+      ttftMs: firstToken - started,
+    });
+    if (speedSamples.length > SPEED_WINDOW_MESSAGES) {
+      speedSamples.splice(0, speedSamples.length - SPEED_WINDOW_MESSAGES);
+    }
+  });
+
+  pi.on("agent_end", async (_event, ctx) => {
     refreshFooterState(ctx);
   });
 
