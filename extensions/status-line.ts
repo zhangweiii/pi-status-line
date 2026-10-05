@@ -72,6 +72,7 @@ export const ALL_WIDGETS = {
 
   // Extensions（其他扩展通过 ctx.ui.setStatus() 提供的状态文本）
   "ext-status":     { label: "Extension Status", category: "Extensions", desc: "其他扩展的 ctx.ui.setStatus() 文本，按 key 排序后拼成一行；纯文本按主题压暗" },
+  "ext-status-lines": { label: "Extension Status (per line)", category: "Extensions", desc: "其他扩展的 ctx.ui.setStatus() 文本，按 key 排序，每个扩展状态独占一行；纯文本按主题压暗" },
 } as const;
 
 export type WidgetId = keyof typeof ALL_WIDGETS;
@@ -484,14 +485,18 @@ function hasAnsi(text: string): boolean {
   return text.includes("\u001b[");
 }
 
-/** 把 ctx.ui.setStatus() 写入的状态按 key 排序拼成一行；没有内容时返回空串。 */
-function formatExtensionStatuses(statuses: ReadonlyMap<string, string>): string {
+/** 按 key 排序取出清洗后的扩展状态文本；没有内容时返回空数组。 */
+function sortedExtensionStatuses(statuses: ReadonlyMap<string, string>): string[] {
   return Array.from(statuses.entries())
     .map(([key, text]) => [key, sanitizeStatusText(text)] as const)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, text]) => text)
-    .filter((text) => text.length > 0)
-    .join(" ");
+    .filter((text) => text.length > 0);
+}
+
+/** 把 ctx.ui.setStatus() 写入的状态按 key 排序拼成一行；没有内容时返回空串。 */
+function formatExtensionStatuses(statuses: ReadonlyMap<string, string>): string {
+  return sortedExtensionStatuses(statuses).join(" ");
 }
 
 /** 读取其他扩展写入 footer 的状态文本；老版本 pi 没有这个方法时返回空。 */
@@ -520,7 +525,8 @@ interface RenderArgs {
   extensionStatuses: ReadonlyMap<string, string>;
 }
 
-function renderWidget(id: WidgetId, ra: RenderArgs): string | null {
+// 返回值可以是多行：string[] 表示该 widget 独占后续每一行（如 ext-status-lines）。
+function renderWidget(id: WidgetId, ra: RenderArgs): string | string[] | null {
   const { cwd, modelId, theme: t, sessionStart, speedData, tokenStats, contextStats, gitStats, thinkingLevel, sessionName, extensionStatuses } = ra;
 
   switch (id) {
@@ -680,6 +686,11 @@ function renderWidget(id: WidgetId, ra: RenderArgs): string | null {
       // 已自带颜色的文本原样透传，由写入它的扩展决定样式。
       return hasAnsi(text) ? text : t.fg("dim", text);
     }
+    case "ext-status-lines": {
+      const statuses = sortedExtensionStatuses(extensionStatuses);
+      if (statuses.length === 0) return null;
+      return statuses.map((text) => hasAnsi(text) ? text : t.fg("dim", text));
+    }
 
     default:
       return null;
@@ -754,10 +765,26 @@ export default function (pi: ExtensionAPI) {
             extensionStatuses: readExtensionStatuses(footerData),
           };
           const sep = theme.fg("dim", " | ");
-          const lines = config.rows
-            .map((row) => row.map((id) => renderWidget(id, ra)).filter((s): s is string => s != null))
-            .filter((parts) => parts.length > 0)
-            .map((parts) => truncateToWidth(parts.join(sep), width));
+          // 多行 widget 会先冲刷当前行，再让每一行各自输出；其后的 widget 从新的一行开始拼接。
+          const rendered: string[] = [];
+          for (const row of config.rows) {
+            let parts: string[] = [];
+            for (const id of row) {
+              const out = renderWidget(id, ra);
+              if (out == null) continue;
+              if (Array.isArray(out)) {
+                if (parts.length > 0) {
+                  rendered.push(parts.join(sep));
+                  parts = [];
+                }
+                rendered.push(...out);
+              } else {
+                parts.push(out);
+              }
+            }
+            if (parts.length > 0) rendered.push(parts.join(sep));
+          }
+          const lines = rendered.map((line) => truncateToWidth(line, width));
 
           if (lines.length === 0) return [theme.fg("dim", "(no widgets — /statusline to configure)")];
           return lines;

@@ -116,7 +116,9 @@ Cache: 37.5% | Total: 52.1k | Turns: 19 | ~/work/pi-status-line | Mem: 18.4G/32.
 - Context: `context-length`, `context-pct`, `context-left`, `context-bar`
 - Session: `cost`, `session-clock`, `session-turns`, `session-name`
 - Environment: `cwd`, `memory`, `terminal-width`
-- Extensions: `ext-status`（其他扩展通过 `ctx.ui.setStatus()` 写入的状态文本，按 key 排序拼成一行；纯文本会用主题压暗，自带颜色的文本原样透传）
+- Extensions: `ext-status`（其他扩展通过 `ctx.ui.setStatus()` 写入的状态文本，按 key 排序拼成一行；纯文本会用主题压暗，自带颜色的文本原样透传）、`ext-status-lines`（同样的状态文本，每个扩展状态独占一行）
+
+多行 widget 说明：`ext-status-lines` 属于多行 widget，渲染时会先结束当前行的拼接，再按 key 顺序逐行输出；它之后的 widget 从新的一行开始。
 
 Token widget semantics:
 
